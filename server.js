@@ -413,7 +413,7 @@ async function handleStream (req, res, videoId) {
       proc.stderr.on('data', d => stderr += d)
       proc.on('close', code => {
         if (code === 0 && stdout.trim()) resolve(stdout.trim())
-        else reject(new Error((stderr || 'exit code ' + code).trim()))
+        else reject(new Error('code=' + code + ' stderr="' + (stderr || '').trim() + '" stdout="' + (stdout || '').trim().substring(0, 200) + '"'))
       })
       proc.on('error', reject)
     })
