@@ -404,10 +404,16 @@ async function handleStream (req, res, videoId) {
       return sendError(res, 502, 'Stream unavailable (binary not found)')
     }
     const audioUrl = await new Promise((resolve, reject) => {
-      const proc = spawn(YT_DLP_PATH, [
+      const args = [
         '-g', '-f', 'bestaudio', '--no-warnings',
-        'https://www.youtube.com/watch?v=' + videoId
-      ], { timeout: 45000 })
+        '--extractor-args', 'youtube:player_client=android',
+      ]
+      const cookiesFile = process.env.COOKIES_FILE
+      if (cookiesFile && fs.existsSync(cookiesFile)) {
+        args.push('--cookies', cookiesFile)
+      }
+      args.push('https://www.youtube.com/watch?v=' + videoId)
+      const proc = spawn(YT_DLP_PATH, args, { timeout: 60000 })
       let stdout = '', stderr = ''
       proc.stdout.on('data', d => stdout += d)
       proc.stderr.on('data', d => stderr += d)
@@ -456,7 +462,9 @@ async function handleStream (req, res, videoId) {
     proxyReq.end()
   } catch (e) {
     log('Stream error for ' + videoId + ': ' + e.message)
-    if (!res.headersSent) sendError(res, 502, 'Stream unavailable')
+    const isBot = e.message.includes('Sign in') || e.message.includes('bot')
+    const hint = isBot ? ' YouTube blocked Render IP. Set COOKIES_FILE env var (see /cookies-guide).' : ''
+    if (!res.headersSent) sendError(res, 502, 'Stream unavailable.' + hint)
   }
 }
 
@@ -638,6 +646,24 @@ const server = http.createServer((req, res) => {
   if (pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end('OK')
+    return
+  }
+
+  if (pathname === '/cookies-guide') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Cookies Guide - Muzima</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:-apple-system,sans-serif;max-width:600px;margin:40px auto;padding:0 20px;line-height:1.6}h1{color:#e91e63}code{background:#f5f5f5;padding:2px 6px;border-radius:4px;font-size:.9em}ol li{margin:8px 0}</style></head><body>
+<h1>Bypass YouTube Bot Detection</h1>
+<p>YouTube blocks cloud IPs. Fix by providing browser cookies:</p>
+<ol>
+<li>Install <a href="https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc">Get cookies.txt LOCALLY</a> (Chrome) or <a href="https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/">cookies.txt</a> (Firefox)</li>
+<li>Go to <strong>youtube.com</strong> and make sure you're logged in</li>
+<li>Click the extension icon and export cookies as <strong>Netscape format</strong></li>
+<li>In Render Dashboard → Environment → <strong>Secret Files</strong> → upload the <code>cookies.txt</code> file (mount path: <code>/etc/secrets/cookies.txt</code>)</li>
+<li>Add env var <code>COOKIES_FILE</code> = <code>/etc/secrets/cookies.txt</code></li>
+<li>Redeploy the service</li>
+</ol>
+<p>Without cookies: stream will fail with <code>Sign in to confirm you're not a bot</code>.</p>
+</body></html>`)
     return
   }
 
