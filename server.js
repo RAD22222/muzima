@@ -521,6 +521,12 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  if (pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.end('OK')
+    return
+  }
+
   if (pathname.startsWith('/data/')) {
     if (!isAllowedOrigin(req) && !hasBrowserUA(req)) {
       log('Blocked: IP=' + ip)
