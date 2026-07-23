@@ -65,6 +65,16 @@ if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true })
 }
 
+if (process.env.YOUTUBE_DL_SKIP_PYTHON_CHECK) {
+  console.log('YOUTUBE_DL_SKIP_PYTHON_CHECK=1')
+}
+try {
+  const bin = require('youtube-dl-exec').binaryPath
+  console.log('yt-dlp binary path: ' + bin + ' exists: ' + fs.existsSync(bin))
+} catch (e) {
+  console.log('yt-dlp binary check error: ' + e.message)
+}
+
 function log (msg) {
   const ts = new Date().toISOString()
   const line = `[${ts}] ${msg}\n`
@@ -221,7 +231,7 @@ async function searchYouTube (query, limit) {
     }
     return tracks
   } catch (e) {
-    log('Search error for "' + query + '": ' + e.message)
+    log('Search error for "' + query + '": ' + e.message + ' (stack: ' + e.stack?.split('\n')[0] + ')')
     return []
   }
 }
