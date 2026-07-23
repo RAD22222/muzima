@@ -11,7 +11,11 @@ const ROOT = __dirname
 const CACHE_DIR = process.env.CACHE_DIR || path.join(os.tmpdir(), 'muzima-cache')
 const SEARCH_CACHE_TTL = 30 * 60 * 1000
 const STREAM_URL_TTL = 4 * 60 * 60 * 1000
-const ALLOWED_ORIGINS = ['localhost:5500', '127.0.0.1:5500', '::1:5500']
+const ALLOWED_ORIGINS = [
+  'localhost:5500', '127.0.0.1:5500', '::1:5500',
+  'muzima-de13.onbelmo.uk', '.onbelmo.uk',
+  '.belmo.uk', 'localhost', '127.0.0.1',
+]
 const RATE_LIMIT_WINDOW = 60_000
 const RATE_LIMIT_MAX = 30
 const ACCESS_LOG = path.join(ROOT, 'access.log')
@@ -78,12 +82,15 @@ function isAllowedOrigin (req) {
   const referer = req.headers['referer'] || ''
   const host = req.headers['host'] || ''
   const source = origin || referer
+  const check = (val) => ALLOWED_ORIGINS.some(o => {
+    const h = o.split(':')[0]
+    return val === h || val.endsWith('.' + h)
+  })
   if (!source) {
-    return ALLOWED_ORIGINS.some(o => host === o || host.startsWith(o.split(':')[0] + ':'))
+    return check(host.split(':')[0])
   }
   try {
-    const sourceHost = new URL(source).hostname
-    return ALLOWED_ORIGINS.some(o => sourceHost === o.split(':')[0] || sourceHost.endsWith('.' + o.split(':')[0]))
+    return check(new URL(source).hostname)
   } catch {
     return false
   }
