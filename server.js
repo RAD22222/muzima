@@ -84,7 +84,24 @@ async function ensureYtDlp () {
     return false
   }
 }
-ensureYtDlp()
+async function testYtDlp () {
+  try {
+    const version = await new Promise((resolve, reject) => {
+      const proc = spawn(YT_DLP_PATH, ['--version'], { timeout: 10000 })
+      let out = ''
+      proc.stdout.on('data', d => out += d)
+      proc.on('close', code => {
+        if (code === 0) resolve(out.trim())
+        else reject(new Error('exit code ' + code))
+      })
+      proc.on('error', reject)
+    })
+    console.log('yt-dlp version: ' + version)
+  } catch (e) {
+    console.log('yt-dlp test failed: ' + e.message)
+  }
+}
+ensureYtDlp().then(testYtDlp)
 
 
 
