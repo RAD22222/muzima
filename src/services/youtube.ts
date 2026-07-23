@@ -5,37 +5,39 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import https from 'node:https'
 import http from 'node:http'
-import { CACHE_DIR, COOKIES_FILE, SEARCH_CACHE_TTL } from '../config.js'
+import { spawn } from 'node:child_process'
+import { CACHE_DIR, COOKIES_FILE, ROOT, SEARCH_CACHE_TTL } from '../config.js'
 import type { Track } from '../types.js'
 
 const searchCache = new Map<string, { data: Track[]; ts: number }>()
 
-let ytdlAgent: ytdl.Agent | undefined
+const YT_DLP_PATH = path.join(ROOT, 'yt-dlp')
+let ytDlpReady = false
 
-function initAgent() {
-  if (ytdlAgent !== undefined) return
-  if (COOKIES_FILE && fs.existsSync(COOKIES_FILE)) {
-    try {
-      const content = fs.readFileSync(COOKIES_FILE, 'utf-8')
-      const cookies: ytdl.Cookie[] = []
-      for (const line of content.split('\n')) {
-        const parts = line.trim().split('\t')
-        if (parts.length >= 7) {
-          cookies.push({
-            name: parts[5],
-            value: parts[6],
-            domain: parts[0],
-            path: parts[2],
-            secure: parts[3] === 'TRUE',
-            httpOnly: parts[4] === 'TRUE',
-          })
-        }
-      }
-      if (cookies.length > 0) ytdlAgent = ytdl.createAgent(cookies)
-    } catch { /* ignore */ }
+async function ensureYtDlp(): Promise<boolean> {
+  if (ytDlpReady) return true
+  if (fs.existsSync(YT_DLP_PATH)) {
+    ytDlpReady = true
+    return true
   }
-  if (!ytdlAgent) ytdlAgent = null as unknown as ytdl.Agent
+  try {
+    console.log('downloading yt-dlp...')
+    const res = await fetch('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux')
+    if (!res.ok) throw new Error('HTTP ' + res.status)
+    const buffer = Buffer.from(await res.arrayBuffer())
+    fs.writeFileSync(YT_DLP_PATH, buffer)
+    fs.chmodSync(YT_DLP_PATH, 0o755)
+    ytDlpReady = true
+    console.log('yt-dlp downloaded (' + buffer.length + ' bytes)')
+    return true
+  } catch (e) {
+    console.error('yt-dlp download failed: ' + (e instanceof Error ? e.message : String(e)))
+    return false
+  }
 }
+
+// Start download in background
+ensureYtDlp()
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
@@ -111,22 +113,74 @@ export function getCachedStream(videoId: string): { filePath: string; ext: strin
   return null
 }
 
-export async function resolveAudioUrl(videoId: string): Promise<string | null> {
-  initAgent()
+async function resolveViaYtDlp(videoId: string): Promise<string | null> {
+  if (!fs.existsSync(YT_DLP_PATH)) return null
   try {
-    const options: ytdl.getInfoOptions = {
-      agent: ytdlAgent || undefined,
-      requestOptions: {
-        headers: { 'User-Agent': UA, 'Accept-Language': 'en-US' },
-      },
-    }
-    const info = await ytdl.getInfo('https://www.youtube.com/watch?v=' + videoId, options)
-    const format = ytdl.chooseFormat(info.formats, { quality: 'lowestaudio', filter: 'audioonly' })
-    return format?.url || null
+    const audioUrl = await new Promise<string>((resolve, reject) => {
+      const args = [
+        '-g', '-f', 'bestaudio', '--no-warnings',
+        '--extractor-args', 'youtube:player_client=android',
+      ]
+      const cookiesFile = process.env.COOKIES_FILE
+      if (cookiesFile && fs.existsSync(cookiesFile)) {
+        args.push('--cookies', cookiesFile)
+      }
+      args.push('https://www.youtube.com/watch?v=' + videoId)
+      const proc = spawn(YT_DLP_PATH, args, { timeout: 60000 })
+      let stdout = '', stderr = ''
+      proc.stdout.on('data', (d: Buffer) => stdout += d.toString())
+      proc.stderr.on('data', (d: Buffer) => stderr += d.toString())
+      proc.on('close', (code) => {
+        if (code === 0 && stdout.trim()) resolve(stdout.trim())
+        else reject(new Error('code=' + code + ' ' + (stderr || '').trim().substring(0, 200)))
+      })
+      proc.on('error', reject)
+    })
+    if (audioUrl && audioUrl.startsWith('http')) return audioUrl
+    return null
   } catch (e) {
-    console.error('resolveAudioUrl error for ' + videoId + ': ' + (e instanceof Error ? e.message : String(e)))
+    console.error('yt-dlp error for ' + videoId + ': ' + (e instanceof Error ? e.message : String(e)))
     return null
   }
+}
+
+async function resolveViaYtdlCore(videoId: string): Promise<string | null> {
+  try {
+    let agent: ytdl.Agent | undefined
+    if (COOKIES_FILE && fs.existsSync(COOKIES_FILE)) {
+      const content = fs.readFileSync(COOKIES_FILE, 'utf-8')
+      const cookies: ytdl.Cookie[] = []
+      for (const line of content.split('\n')) {
+        const parts = line.trim().split('\t')
+        if (parts.length >= 7) {
+          cookies.push({
+            name: parts[5], value: parts[6],
+            domain: parts[0], path: parts[2],
+            secure: parts[3] === 'TRUE',
+            httpOnly: parts[4] === 'TRUE',
+          })
+        }
+      }
+      if (cookies.length > 0) agent = ytdl.createAgent(cookies)
+    }
+    const info = await ytdl.getInfo('https://www.youtube.com/watch?v=' + videoId, {
+      agent,
+      requestOptions: { headers: { 'User-Agent': UA, 'Accept-Language': 'en-US' } },
+    })
+    const format = ytdl.chooseFormat(info.formats, { quality: 'lowestaudio', filter: 'audioonly' })
+    return format?.url || null
+  } catch {
+    return null
+  }
+}
+
+export async function resolveAudioUrl(videoId: string): Promise<string | null> {
+  // Try yt-dlp first (more reliable on cloud IPs)
+  const fromYtDlp = await resolveViaYtDlp(videoId)
+  if (fromYtDlp) return fromYtDlp
+
+  // Fallback to ytdl-core
+  return resolveViaYtdlCore(videoId)
 }
 
 export function pipeAudioStream(

@@ -5,3 +5,4 @@ access.log
 *player-script*.js
 deploy.*
 dist/
+yt-dlp
