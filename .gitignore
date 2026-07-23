@@ -1,0 +1,6 @@
+node_modules/
+.cache/
+access.log
+.env
+*player-script*.js
+deploy.*

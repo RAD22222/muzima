@@ -1,0 +1,14 @@
+{
+  "name": "muzima",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
+    "play-dl": "^1.9.7",
+    "youtube-dl-exec": "^3.1.9",
+    "ytdl-core": "^4.11.5"
+  }
+}
