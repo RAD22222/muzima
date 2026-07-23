@@ -3,11 +3,12 @@ const https = require('https')
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
+const os = require('os')
 const youtubedl = require('youtube-dl-exec')
 
 const PORT = process.env.PORT || 5500
 const ROOT = __dirname
-const CACHE_DIR = path.join(ROOT, '.cache')
+const CACHE_DIR = process.env.CACHE_DIR || path.join(os.tmpdir(), 'muzima-cache')
 const SEARCH_CACHE_TTL = 30 * 60 * 1000
 const STREAM_URL_TTL = 4 * 60 * 60 * 1000
 const ALLOWED_ORIGINS = ['localhost:5500', '127.0.0.1:5500', '::1:5500']
