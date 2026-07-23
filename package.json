@@ -6,6 +6,6 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "play-dl": "^1.9.7"
+    "youtube-dl-exec": "^3.1.9"
   }
 }

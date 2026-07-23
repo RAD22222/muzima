@@ -1,10 +1,10 @@
 const http = require('http')
-
+const https = require('https')
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const os = require('os')
-const play = require('play-dl')
+const youtubedl = require('youtube-dl-exec')
 
 const PORT = process.env.PORT || 5500
 const ROOT = __dirname
@@ -189,18 +189,55 @@ async function searchYouTube (query, limit) {
   }
 
   try {
-    const results = await play.search(query, { limit, source: { youtube: 'video' } })
+    const url = 'https://www.youtube.com/results?search_query=' + encodeURIComponent(query)
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US;q=0.9',
+      }
+    })
+    const html = await res.text()
 
-    const tracks = results.map(r => ({
-      id: r.id || '',
-      title: r.title || 'Unknown',
-      artist: r.channel?.name || 'Unknown',
-      image: r.thumbnail?.url || '',
-      streaming_url: '/data/stream/' + (r.id || ''),
-      duration: r.durationInSec || 0,
-      album: '',
-      uploader: { name: r.channel?.name || 'Unknown', id: null, image: '' }
-    }))
+    const match = html.match(/ytInitialData\s*=\s*({.+?});\s*<\/script>/)
+    if (!match) throw new Error('Could not extract ytInitialData')
+
+    const data = JSON.parse(match[1])
+    const sections = data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || []
+
+    const tracks = []
+    for (const section of sections) {
+      const items = section.itemSectionRenderer?.contents || []
+      for (const item of items) {
+        const video = item.videoRenderer
+        if (!video || !video.videoId) continue
+
+        const artist = video.ownerText?.runs?.[0]?.text
+          || video.shortBylineText?.runs?.[0]?.text || 'Unknown'
+        const thumbs = video.thumbnail?.thumbnails || []
+        const image = thumbs.length > 0 ? thumbs[thumbs.length - 1]?.url : ''
+
+        let duration = 0
+        if (video.lengthSeconds) {
+          duration = parseInt(video.lengthSeconds)
+        } else if (video.lengthText?.simpleText) {
+          const parts = video.lengthText.simpleText.split(':').map(Number)
+          duration = parts.reduce((acc, p) => acc * 60 + p, 0)
+        }
+
+        tracks.push({
+          id: video.videoId,
+          title: video.title?.runs?.[0]?.text || 'Unknown',
+          artist,
+          image,
+          streaming_url: '/data/stream/' + video.videoId,
+          duration,
+          album: '',
+          uploader: { name: artist, id: null, image: '' }
+        })
+        if (tracks.length >= limit) break
+      }
+      if (tracks.length >= limit) break
+    }
 
     searchCache.set(cacheKey, { data: tracks, ts: Date.now() })
     if (searchCache.size > 500) {
@@ -319,27 +356,51 @@ async function handleStream (req, res, videoId) {
     return
   }
 
-  // Fetch and stream from YouTube via play-dl
+  // Fetch audio URL via yt-dlp and proxy
   try {
-    log('Streaming ' + videoId + ' via play-dl')
-    const url = 'https://www.youtube.com/watch?v=' + videoId
-    const audioStream = await play.stream(url, { quality: 0 })
-
-    const cacheDir = getAudioCachePath(videoId)
-    if (!fs.existsSync(cacheDir)) {
-      fs.mkdirSync(cacheDir, { recursive: true })
-    }
-    const cachePath = path.join(cacheDir, 'audio.webm')
-    const fileStream = fs.createWriteStream(cachePath)
-
-    res.writeHead(200, {
-      'Content-Type': 'audio/webm',
-      'Cache-Control': 'no-cache',
-      'Accept-Ranges': 'bytes',
+    log('Resolving stream for ' + videoId)
+    const audioUrl = await youtubedl('https://www.youtube.com/watch?v=' + videoId, {
+      getUrl: true,
+      format: 'bestaudio',
+      noWarnings: true,
     })
+    if (!audioUrl || typeof audioUrl !== 'string' || !audioUrl.startsWith('http')) {
+      throw new Error('Invalid audio URL')
+    }
 
-    audioStream.stream.pipe(fileStream)
-    audioStream.stream.pipe(res)
+    const urlObj = new URL(audioUrl)
+    const mod = urlObj.protocol === 'https:' ? https : http
+    const range = req.headers['range'] || ''
+
+    const proxyOpts = { hostname: urlObj.hostname, path: urlObj.pathname + urlObj.search, method: 'GET' }
+    if (range) proxyOpts.headers = { Range: range }
+
+    const proxyReq = mod.request(proxyOpts, (proxyRes) => {
+      const statusCode = range && proxyRes.statusCode === 206 ? 206 : 200
+      const responseHeaders = {
+        'Content-Type': proxyRes.headers['content-type'] || 'audio/webm',
+        'Cache-Control': 'no-cache',
+        'Accept-Ranges': 'bytes',
+      }
+      if (proxyRes.headers['content-range']) responseHeaders['Content-Range'] = proxyRes.headers['content-range']
+      if (proxyRes.headers['content-length']) responseHeaders['Content-Length'] = proxyRes.headers['content-length']
+
+      res.writeHead(statusCode, responseHeaders)
+
+      const cacheDir = getAudioCachePath(videoId)
+      if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
+      const ext = (proxyRes.headers['content-type'] || '').includes('mp4') ? '.m4a' : '.webm'
+      const cachePath = path.join(cacheDir, 'audio' + ext)
+      const fileStream = fs.createWriteStream(cachePath)
+      proxyRes.on('data', chunk => fileStream.write(chunk))
+      proxyRes.on('end', () => fileStream.end())
+      proxyRes.pipe(res)
+    })
+    proxyReq.on('error', (err) => {
+      log('Proxy error for ' + videoId + ': ' + err.message)
+      if (!res.headersSent) sendError(res, 502, 'Stream unavailable')
+    })
+    proxyReq.end()
   } catch (e) {
     log('Stream error for ' + videoId + ': ' + e.message)
     if (!res.headersSent) sendError(res, 502, 'Stream unavailable')
