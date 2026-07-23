@@ -5,7 +5,7 @@ const path = require('path')
 const crypto = require('crypto')
 const youtubedl = require('youtube-dl-exec')
 
-const PORT = 5500
+const PORT = process.env.PORT || 5500
 const ROOT = __dirname
 const CACHE_DIR = path.join(ROOT, '.cache')
 const SEARCH_CACHE_TTL = 30 * 60 * 1000
