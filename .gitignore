@@ -4,4 +4,4 @@ access.log
 .env
 *player-script*.js
 deploy.*
-yt-dlp
+dist/
