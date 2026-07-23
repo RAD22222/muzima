@@ -419,6 +419,9 @@
     },
 
     onError () {
+      const code = this.audio.error ? this.audio.error.code : '?'
+      const msg = this.audio.error ? this.audio.error.message : 'Playback failed'
+      Toast.show('Stream error (' + code + '), skipping...')
       this.next()
     },
 

@@ -64,17 +64,27 @@ if (!fs.existsSync(CACHE_DIR)) {
 }
 
 const YT_DLP_PATH = path.join(ROOT, 'yt-dlp')
-try {
-  const exists = fs.existsSync(YT_DLP_PATH)
-  if (exists) {
+async function ensureYtDlp () {
+  if (fs.existsSync(YT_DLP_PATH)) {
     const stat = fs.statSync(YT_DLP_PATH)
-    console.log('yt-dlp exists: ' + exists + ' size: ' + stat.size + ' mode: ' + stat.mode.toString(8))
-  } else {
-    console.log('yt-dlp NOT FOUND at: ' + YT_DLP_PATH)
+    console.log('yt-dlp exists size=' + stat.size + ' mode=' + stat.mode.toString(8))
+    return true
   }
-} catch (e) {
-  console.log('yt-dlp check error: ' + e.message)
+  console.log('yt-dlp not found at ' + YT_DLP_PATH + ', downloading...')
+  try {
+    const res = await fetch('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux')
+    if (!res.ok) throw new Error('HTTP ' + res.status)
+    const buffer = Buffer.from(await res.arrayBuffer())
+    fs.writeFileSync(YT_DLP_PATH, buffer)
+    fs.chmodSync(YT_DLP_PATH, 0o755)
+    console.log('yt-dlp downloaded ' + buffer.length + ' bytes')
+    return true
+  } catch (e) {
+    console.log('yt-dlp download failed: ' + e.message)
+    return false
+  }
 }
+ensureYtDlp()
 
 
 
