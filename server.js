@@ -63,6 +63,19 @@ if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true })
 }
 
+const YT_DLP_PATH = path.join(ROOT, 'yt-dlp')
+try {
+  const exists = fs.existsSync(YT_DLP_PATH)
+  if (exists) {
+    const stat = fs.statSync(YT_DLP_PATH)
+    console.log('yt-dlp exists: ' + exists + ' size: ' + stat.size + ' mode: ' + stat.mode.toString(8))
+  } else {
+    console.log('yt-dlp NOT FOUND at: ' + YT_DLP_PATH)
+  }
+} catch (e) {
+  console.log('yt-dlp check error: ' + e.message)
+}
+
 
 
 function log (msg) {
@@ -359,18 +372,21 @@ async function handleStream (req, res, videoId) {
   // Fetch audio URL via yt-dlp binary and proxy
   try {
     log('Resolving stream for ' + videoId)
-    const ytDlpPath = path.join(ROOT, 'yt-dlp')
+    if (!fs.existsSync(YT_DLP_PATH)) {
+      log('yt-dlp binary not found')
+      return sendError(res, 502, 'Stream unavailable (binary not found)')
+    }
     const audioUrl = await new Promise((resolve, reject) => {
-      const proc = spawn(ytDlpPath, [
+      const proc = spawn(YT_DLP_PATH, [
         '-g', '-f', 'bestaudio', '--no-warnings',
         'https://www.youtube.com/watch?v=' + videoId
-      ], { timeout: 30000 })
+      ], { timeout: 45000 })
       let stdout = '', stderr = ''
       proc.stdout.on('data', d => stdout += d)
       proc.stderr.on('data', d => stderr += d)
       proc.on('close', code => {
         if (code === 0 && stdout.trim()) resolve(stdout.trim())
-        else reject(new Error(stderr.trim() || 'yt-dlp exit code ' + code))
+        else reject(new Error((stderr || 'exit code ' + code).trim()))
       })
       proc.on('error', reject)
     })
