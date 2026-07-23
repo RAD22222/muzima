@@ -4,7 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const os = require('os')
-const youtubedl = require('youtube-dl-exec')
+const { spawn } = require('child_process')
 
 const PORT = process.env.PORT || 5500
 const ROOT = __dirname
@@ -356,15 +356,25 @@ async function handleStream (req, res, videoId) {
     return
   }
 
-  // Fetch audio URL via yt-dlp and proxy
+  // Fetch audio URL via yt-dlp binary and proxy
   try {
     log('Resolving stream for ' + videoId)
-    const audioUrl = await youtubedl('https://www.youtube.com/watch?v=' + videoId, {
-      getUrl: true,
-      format: 'bestaudio',
-      noWarnings: true,
+    const ytDlpPath = path.join(ROOT, 'yt-dlp')
+    const audioUrl = await new Promise((resolve, reject) => {
+      const proc = spawn(ytDlpPath, [
+        '-g', '-f', 'bestaudio', '--no-warnings',
+        'https://www.youtube.com/watch?v=' + videoId
+      ], { timeout: 30000 })
+      let stdout = '', stderr = ''
+      proc.stdout.on('data', d => stdout += d)
+      proc.stderr.on('data', d => stderr += d)
+      proc.on('close', code => {
+        if (code === 0 && stdout.trim()) resolve(stdout.trim())
+        else reject(new Error(stderr.trim() || 'yt-dlp exit code ' + code))
+      })
+      proc.on('error', reject)
     })
-    if (!audioUrl || typeof audioUrl !== 'string' || !audioUrl.startsWith('http')) {
+    if (!audioUrl || !audioUrl.startsWith('http')) {
       throw new Error('Invalid audio URL')
     }
 
