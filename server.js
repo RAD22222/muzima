@@ -189,25 +189,18 @@ async function searchYouTube (query, limit) {
   }
 
   try {
-    const results = await play.search(query, { limit })
+    const results = await play.search(query, { limit, source: { youtube: 'video' } })
 
-    const tracks = results.map(r => {
-      let id = ''
-      try {
-        const u = new URL(r.url || '')
-        id = u.searchParams.get('v') || u.pathname.split('/').filter(Boolean).pop() || ''
-      } catch {}
-      return {
-        id,
-        title: r.title || 'Unknown',
-        artist: r.channel?.name || 'Unknown',
-        image: (r.thumbnails || []).sort((a, b) => (b.width || 0) - (a.width || 0))[0]?.url || '',
-        streaming_url: '/data/stream/' + id,
-        duration: r.durationInSec || r.duration || 0,
-        album: '',
-        uploader: { name: r.channel?.name || 'Unknown', id: null, image: '' }
-      }
-    })
+    const tracks = results.map(r => ({
+      id: r.id || '',
+      title: r.title || 'Unknown',
+      artist: r.channel?.name || 'Unknown',
+      image: r.thumbnail?.url || '',
+      streaming_url: '/data/stream/' + (r.id || ''),
+      duration: r.durationInSec || 0,
+      album: '',
+      uploader: { name: r.channel?.name || 'Unknown', id: null, image: '' }
+    }))
 
     searchCache.set(cacheKey, { data: tracks, ts: Date.now() })
     if (searchCache.size > 500) {
